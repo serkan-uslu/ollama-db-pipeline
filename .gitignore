@@ -18,6 +18,10 @@ dist/
 build/
 .eggs/
 
+# Logs
+*.log
+pipeline_run.log
+
 # Prefect
 .prefect/
 

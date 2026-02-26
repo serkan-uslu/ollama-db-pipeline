@@ -23,7 +23,13 @@ class Settings(BaseSettings):
 
     # --- Enrichment Config ---
     enrich_version: int = 1
-    llm_model: str = "llama-3.3-70b-versatile"
+    llm_model: str = "llama3.3:70b"
+    # "groq" veya "ollama"
+    llm_provider: str = "ollama"
+    # Ollama local API (OpenAI uyumlu)
+    ollama_base_url: str = "http://localhost:11434/v1"
+    # Paralel enrichment worker sayısı (Ollama için 2-4 önerilir)
+    enrich_workers: int = 3
 
     class Config:
         env_file = ".env"

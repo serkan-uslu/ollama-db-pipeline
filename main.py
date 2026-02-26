@@ -12,21 +12,40 @@ Usage:
 """
 
 import argparse
-import asyncio
 import logging
+import os
 import sys
+
+# ── Prefect: tüm logları API'ye değil direkt terminale yaz ────────────────────
+os.environ["PREFECT_LOGGING_TO_API_ENABLED"] = "False"
+os.environ["PREFECT_LOGGING_LEVEL"] = "WARNING"   # Prefect kendi iç loglarını sustur
+os.environ["PREFECT_API_URL"] = ""                 # ephemeral server kullan
 
 from pipeline.core.db import init_db
 from pipeline.flow import ollama_pipeline
+from pipeline.agents.crawler import reparse_from_html
 
-# ── Logging Setup ──────────────────────────────────────────────────────────────
+# ── Logging: pipeline logları daima stdout'a, flush ile anlık görünür ─────────
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter(
+    "%(asctime)s │ %(levelname)-8s │ %(name)-20s │ %(message)s",
+    datefmt="%H:%M:%S",
+))
+handler.stream = open(sys.stdout.fileno(), mode='w', buffering=1, closefd=False)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    stream=sys.stdout,
-)
+root = logging.getLogger()
+root.setLevel(logging.INFO)
+root.handlers.clear()
+root.addHandler(handler)
+
+# pipeline.* loggerlarını da yakala
+for name in ("pipeline", "pipeline.agents.crawler", "pipeline.agents.enricher",
+             "pipeline.agents.validator", "pipeline.agents.exporter",
+             "pipeline.agents.pr_creator"):
+    lg = logging.getLogger(name)
+    lg.setLevel(logging.INFO)
+    lg.propagate = True
+
 logger = logging.getLogger("ollama-pipeline")
 
 
@@ -46,6 +65,7 @@ Examples:
   python main.py --force-enrich          Re-enrich all models (ignore enrich_version)
   python main.py --model deepseek-r1     Process a single model only
   python main.py --dry-run               Stop before export + PR (DB writes only)
+  python main.py --reparse               Re-parse stored raw_html (no network) and update crawl fields
         """,
     )
 
@@ -81,11 +101,18 @@ Examples:
         action="store_true",
         help="Run crawl + enrich only. Skip export and PR creation.",
     )
+    parser.add_argument(
+        "--reparse",
+        action="store_true",
+        help="Re-parse stored raw_html for all models (no network). Updates readme, applications, memory_requirements.",
+    )
 
     return parser.parse_args()
 
 
 def main():
+    import datetime, traceback
+
     args = parse_args()
 
     logger.info("=" * 55)
@@ -100,8 +127,16 @@ def main():
 
     init_db()
 
-    result = asyncio.run(
-        ollama_pipeline(
+    # ── --reparse: no pipeline, just re-extract fields from stored HTML ───────
+    if args.reparse:
+        print("\n[REPARSE] Ham HTML'den yeniden parse ediliyor...", flush=True)
+        updated, skipped = reparse_from_html()
+        print(f"[REPARSE] Tamamlandi: {updated} guncellendi, {skipped} html yok", flush=True)
+        return
+
+    start = datetime.datetime.now()
+    try:
+        result = ollama_pipeline(
             skip_crawl=args.skip_crawl,
             skip_enrich=args.skip_enrich,
             force_crawl=args.force_crawl,
@@ -109,12 +144,28 @@ def main():
             model=args.model,
             dry_run=args.dry_run,
         )
-    )
+        elapsed = datetime.datetime.now() - start
+        print(f"\n{'█'*55}", flush=True)
+        print(f"✅  PIPELINE BAŞARIYLA TAMAMLANDI  ({elapsed})", flush=True)
+        print(f"{'█'*55}\n", flush=True)
+        logger.info(f"Pipeline finished OK in {elapsed}.")
 
-    if result:
-        logger.info("Pipeline finished successfully.")
-    else:
-        logger.info("Pipeline finished (dry run or no result).")
+    except KeyboardInterrupt:
+        elapsed = datetime.datetime.now() - start
+        print(f"\n{'█'*55}", flush=True)
+        print(f"⏹️   PIPELINE DURDURULDU (Ctrl+C)  ({elapsed})", flush=True)
+        print(f"{'█'*55}\n", flush=True)
+        sys.exit(0)
+
+    except Exception as e:
+        elapsed = datetime.datetime.now() - start
+        print(f"\n{'█'*55}", flush=True)
+        print(f"❌  PIPELINE ÇÖKTÜ  ({elapsed})", flush=True)
+        print(f"    HATA: {type(e).__name__}: {e}", flush=True)
+        print(f"{'█'*55}\n", flush=True)
+        logger.error(f"Pipeline CRASHED after {elapsed}: {e}")
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

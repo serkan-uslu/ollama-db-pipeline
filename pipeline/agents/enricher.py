@@ -1,25 +1,29 @@
 """
 pipeline/agents/enricher.py
 
-F-02: Enricher Agent — instructor + Groq API
+F-02: Enricher Agent — instructor + Groq API OR local Ollama
 
-Reads unenriched models from DB, sends them to Groq LLM with a structured
+Reads unenriched models from DB, sends them to LLM with a structured
 prompt, and writes the enrichment results back to the DB.
 
-Uses `instructor` to guarantee valid structured output — no manual JSON parsing.
-instructor handles retries automatically (max_retries=3).
+Providers:
+  - "groq"   → Groq cloud API (GROQ_API_KEY required)
+  - "ollama" → Local Ollama via OpenAI-compatible API (no key needed)
 
-Rules:
-- Never hardcode API keys — uses settings.groq_api_key
-- build_prompt() logic ported from legacy/enrich.py
-- Only touches DB via session — agents return data, flow.py coordinates writes
+Parallelism:
+  - ThreadPoolExecutor with ENRICH_WORKERS workers
+  - Workers do only LLM I/O (thread-safe, no DB access)
+  - Main thread collects results and writes to DB sequentially
+
+instructor handles LLM retries automatically (max_retries=3).
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import instructor
-from groq import Groq
+from openai import OpenAI
 from sqlmodel import Session, select
 
 from pipeline.core.db import engine, init_db
@@ -74,33 +78,43 @@ Fill every field accurately based on the information above.
 """
 
 
-# ── Groq Client (lazy init) ────────────────────────────────────────────────────
+# ── Client Factory ─────────────────────────────────────────────────────────────
 
-_client: instructor.Instructor | None = None
+def _make_client() -> instructor.Instructor:
+    """
+    Create a fresh instructor client based on LLM_PROVIDER setting.
+    Called once per worker thread — each thread gets its own client.
+    """
+    provider = settings.llm_provider.lower()
 
-
-def get_client() -> instructor.Instructor:
-    """Lazily initialise the instructor+Groq client."""
-    global _client
-    if _client is None:
+    if provider == "groq":
+        from groq import Groq
         if not settings.groq_api_key:
-            raise RuntimeError(
-                "GROQ_API_KEY is not set. "
-                "Add it to your .env file and restart."
-            )
-        groq = Groq(api_key=settings.groq_api_key)
-        _client = instructor.from_groq(groq, mode=instructor.Mode.JSON)
-    return _client
+            raise RuntimeError("GROQ_API_KEY is not set.")
+        return instructor.from_groq(Groq(api_key=settings.groq_api_key), mode=instructor.Mode.JSON)
+
+    elif provider == "ollama":
+        # Ollama exposes an OpenAI-compatible API at localhost:11434/v1
+        openai_client = OpenAI(
+            base_url=settings.ollama_base_url,
+            api_key="ollama",  # Ollama ignores the key but OpenAI client requires it
+        )
+        return instructor.from_openai(openai_client, mode=instructor.Mode.JSON)
+
+    else:
+        raise ValueError(f"Unknown LLM_PROVIDER: '{provider}'. Use 'groq' or 'ollama'.")
 
 
-# ── Core Enrichment Function ───────────────────────────────────────────────────
+# ── Core Enrichment Function (thread-safe — no DB access) ─────────────────────
 
 def enrich_model(model: Model) -> EnrichmentOutput | None:
     """
-    Send a model to Groq LLM and return structured EnrichmentOutput.
-    Returns None on failure (after instructor's internal retries).
+    Send a model to LLM and return structured EnrichmentOutput.
+    Thread-safe: creates its own client, no shared state.
+    Returns None on failure.
     """
-    client = get_client()
+    # Each call creates a fresh client — safe for ThreadPoolExecutor
+    client = _make_client()
     try:
         result: EnrichmentOutput = client.chat.completions.create(
             model=settings.llm_model,
@@ -109,7 +123,7 @@ def enrich_model(model: Model) -> EnrichmentOutput | None:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": build_prompt(model)},
             ],
-            max_retries=3,  # instructor handles retries automatically
+            max_retries=3,
         )
         return result
     except Exception as e:
@@ -128,8 +142,8 @@ def get_unenriched_models(
     Return models that need enrichment:
     - enrich_version IS NULL (never enriched)
     - enrich_version < settings.enrich_version (schema bumped)
-    - If force=True: all models
-    - If single_slug: only that model
+    - force=True: all models
+    - single_slug: only that one model
     """
     query = select(Model)
 
@@ -144,74 +158,121 @@ def get_unenriched_models(
     return list(session.exec(query).all())
 
 
-# ── Enrichment Runner ──────────────────────────────────────────────────────────
+# ── Parallel Enrichment Runner ────────────────────────────────────────────────
 
 def run_enricher(
     force: bool = False,
     single_slug: str | None = None,
 ) -> dict:
     """
-    Enrich all unenriched (or outdated) models.
-    Writes results directly to DB — commits per model for crash safety.
+    Enrich all unenriched (or outdated) models in parallel.
 
-    Returns summary stats: {total, ok, failed, skipped}
+    Design:
+    - ThreadPoolExecutor workers do LLM I/O only (thread-safe)
+    - Main thread writes results to DB sequentially (SQLite-safe)
+    - Commits per model for crash safety
+
+    Returns summary stats: {total, ok, failed, provider, workers}
     """
     init_db()
     ok = 0
     failed = 0
 
+    workers = settings.enrich_workers if not single_slug else 1
+    provider = settings.llm_provider
+
     with Session(engine) as session:
         models = get_unenriched_models(session, single_slug=single_slug, force=force)
         total = len(models)
+
+        print(f"\n[ENRICHER] {'─'*60}", flush=True)
+        print(f"[ENRICHER] 🤖 Başlıyor", flush=True)
+        print(f"[ENRICHER]    Modeller  : {total}", flush=True)
+        print(f"[ENRICHER]    Provider  : {provider.upper()}", flush=True)
+        print(f"[ENRICHER]    LLM Model : {settings.llm_model}", flush=True)
+        print(f"[ENRICHER]    Workers   : {workers} paralel", flush=True)
+        print(f"[ENRICHER]    Versiyon  : {settings.enrich_version}", flush=True)
         logger.info(
-            f"=== Enricher starting — {total} models | "
-            f"LLM: {settings.llm_model} | "
-            f"enrich_version: {settings.enrich_version} ==="
+            f"=== Enricher starting === {total} models | {provider} | {settings.llm_model} | {workers} workers"
         )
 
-        for i, model in enumerate(models, 1):
-            logger.info(f"[{i}/{total}] Enriching: {model.model_identifier}")
+        if total == 0:
+            print("[ENRICHER] ✅ Tüm modeller zaten enriched, yapacak iş yok", flush=True)
+            logger.info("=== Nothing to enrich ===")
+            return {"total": 0, "ok": 0, "failed": 0, "provider": provider, "workers": workers}
 
-            result = enrich_model(model)
+        # ── Submit all LLM jobs in parallel ───────────────────────────────────
+        # future → model  mapping so we can write results in order
+        future_to_model: dict = {}
 
-            if result is None:
-                logger.warning(f"  → FAILED: {model.model_identifier}")
-                failed += 1
-                continue
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for model in models:
+                future = executor.submit(enrich_model, model)
+                future_to_model[future] = model
 
-            # Write all enrichment fields to model
-            model.use_cases = list(result.use_cases)
-            model.domain = result.domain
-            model.ai_languages = list(result.languages)
-            model.complexity = result.complexity
-            model.best_for = result.best_for
-            model.license = result.license
-            model.base_model = result.base_model
-            model.model_family = result.model_family
-            model.is_fine_tuned = result.is_fine_tuned
-            # LLM confirmation overrides crawler heuristic for is_uncensored
-            model.is_uncensored = result.is_uncensored
-            model.strengths = list(result.strengths)
-            model.limitations = list(result.limitations)
-            model.target_audience = list(result.target_audience)
-            model.enrich_version = settings.enrich_version
-            # Reset validation so validator re-checks
-            model.validated = None
-            model.validation_failed = None
+            completed = 0
+            for future in as_completed(future_to_model):
+                model = future_to_model[future]
+                completed += 1
 
-            session.add(model)
-            session.commit()
+                try:
+                    result: EnrichmentOutput | None = future.result()
+                except Exception as e:
+                    print(f"[ENRICHER] [{completed:>3}/{total}] ❌ HATA: {model.model_identifier} → {e}", flush=True)
+                    logger.error(f"[{completed}/{total}] Worker exception for {model.model_identifier}: {e}")
+                    failed += 1
+                    continue
 
-            logger.info(
-                f"  → OK | family={result.model_family} | "
-                f"domain={result.domain} | "
-                f"uncensored={result.is_uncensored} | "
-                f"langs={result.languages}"
-            )
-            ok += 1
+                if result is None:
+                    print(f"[ENRICHER] [{completed:>3}/{total}] ⚠️  BAŞARISIZ: {model.model_identifier}", flush=True)
+                    logger.warning(f"[{completed}/{total}] FAILED: {model.model_identifier}")
+                    failed += 1
+                    continue
 
-    logger.info(f"=== Enricher done. OK: {ok} | Failed: {failed} ===")
-    if failed:
-        logger.info("  Re-run with --force-enrich to retry failed models.")
+                # ── Write to DB (main thread, sequential) ─────────────────────
+                # Re-fetch from session to ensure we have the latest state
+                db_model = session.get(Model, model.id)
+                if db_model is None:
+                    logger.warning(f"  Model {model.model_identifier} not found in DB, skipping write")
+                    failed += 1
+                    continue
 
-    return {"total": total, "ok": ok, "failed": failed}
+                db_model.use_cases = list(result.use_cases)
+                db_model.domain = result.domain
+                db_model.ai_languages = list(result.languages)
+                db_model.complexity = result.complexity
+                db_model.best_for = result.best_for
+                db_model.license = result.license
+                db_model.base_model = result.base_model
+                db_model.model_family = result.model_family
+                db_model.is_fine_tuned = result.is_fine_tuned
+                db_model.is_uncensored = result.is_uncensored
+                db_model.strengths = list(result.strengths)
+                db_model.limitations = list(result.limitations)
+                db_model.target_audience = list(result.target_audience)
+                db_model.enrich_version = settings.enrich_version
+                db_model.validated = None
+                db_model.validation_failed = None
+
+                session.add(db_model)
+                session.commit()
+
+                uncensored_flag = " 🔞" if result.is_uncensored else ""
+                print(
+                    f"[ENRICHER] [{completed:>3}/{total}] ✅ {model.model_identifier}"
+                    f" │ {result.model_family or '?'} │ {result.domain}"
+                    f" │ {result.complexity} │ langs={result.languages}{uncensored_flag}",
+                    flush=True,
+                )
+                logger.info(
+                    f"[{completed}/{total}] ✓ {model.model_identifier}"
+                    f" | family={result.model_family}"
+                    f" | domain={result.domain}"
+                    f" | uncensored={result.is_uncensored}"
+                )
+                ok += 1
+
+    print(f"[ENRICHER] {'─'*60}", flush=True)
+    print(f"[ENRICHER] 🏁 Tamamlandı — ✅ OK: {ok} | ❌ Başarısız: {failed} | Provider: {provider.upper()}", flush=True)
+    logger.info(f"=== Enricher done — OK: {ok} | Failed: {failed} | Provider: {provider.upper()} ===")
+    return {"total": total, "ok": ok, "failed": failed, "provider": provider, "workers": workers}

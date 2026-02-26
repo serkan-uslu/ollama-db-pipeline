@@ -56,6 +56,7 @@ def model_to_dict(m: Model) -> dict:
         "labels": m.labels or [],                    # ["8b", "70b", "405b"]
 
         # ── Hardware ─────────────────────────────────────────────────────────
+        "applications": m.applications or [],
         "memory_requirements": m.memory_requirements or [],
         "min_ram_gb": m.min_ram_gb,
         "context_window": m.context_window,
@@ -140,10 +141,16 @@ def export_to_json(output_path: str | Path = DEFAULT_OUTPUT_PATH) -> dict:
         "output_path": str(output_path),
     }
 
-    logger.info(
-        f"Exported {total} models → {output_path}\n"
-        f"  validated={stats['validated']} | "
+    print(
+        f"[EXPORTER] ✅ {total} model dışa aktarıldı → {output_path}\n"
+        f"[EXPORTER]    validated={stats['validated']} | "
         f"failed={stats['validation_failed']} | "
-        f"uncensored={stats['uncensored']}"
+        f"uncensored={stats['uncensored']}",
+        flush=True,
+    )
+    logger.info(
+        f"Exported {total} models → {output_path} | "
+        f"validated={stats['validated']} | "
+        f"failed={stats['validation_failed']}"
     )
     return stats

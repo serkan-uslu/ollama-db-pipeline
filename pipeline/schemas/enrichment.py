@@ -222,9 +222,9 @@ class EnrichmentOutput(BaseModel):
         description="2-5 short strings highlighting what this model excels at.",
     )
     limitations: list[str] = Field(
-        min_length=1,
+        min_length=0,
         max_length=5,
-        description="1-5 short strings about known weaknesses or constraints.",
+        description="0-5 short strings about known weaknesses or constraints. Use empty list if none are known.",
     )
     target_audience: list[Audience] = Field(
         min_length=1,

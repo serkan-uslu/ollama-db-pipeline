@@ -31,6 +31,7 @@ class Model(SQLModel, table=True):
     # ── Raw Scraped ────────────────────────────────────────────────────────────
     description: Optional[str] = Field(default=None)
     readme: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    raw_html: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))  # full detail page HTML for re-parsing
 
     # Capability tags: ["Tools", "Vision", "Thinking", "Cloud"]
     capability: Optional[str] = Field(default=None)  # legacy single string
@@ -46,6 +47,12 @@ class Model(SQLModel, table=True):
     tags: int = Field(default=0)
     last_updated: Optional[date] = Field(default=None)
     last_updated_str: Optional[str] = Field(default=None)
+
+    # ── Applications ───────────────────────────────────────────────────────────
+    # [{name: "Claude Code", launch_command: "ollama launch claude --model lfm2"}]
+    applications: Optional[list] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # ── Hardware ───────────────────────────────────────────────────────────────
     # [{tag, size, size_gb, recommended_ram_gb, quantization, context, context_window}]

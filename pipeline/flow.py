@@ -10,6 +10,7 @@ Each agent is wrapped as a Prefect @task with retry logic.
 The flow supports partial runs via skip/force flags.
 """
 
+import asyncio
 import logging
 
 from prefect import flow, task
@@ -27,57 +28,71 @@ logger = logging.getLogger(__name__)
 # ── Tasks ──────────────────────────────────────────────────────────────────────
 
 @task(name="crawler", retries=3, retry_delay_seconds=30)
-async def run_crawler_task(force: bool = False):
+def run_crawler_task(force: bool = False):
     """Crawl ollama.com/library + detail pages, upsert to DB."""
-    logger.info("=== Crawler starting ===")
-    models = await run_full_crawl(force=force)
-    logger.info(f"=== Crawler done — {len(models)} models processed ===")
+    print(f"\n{'═'*60}", flush=True)
+    print(f"[FLOW] ▶ ADIM 1 / 5 — CRAWLER", flush=True)
+    print(f"{'═'*60}", flush=True)
+    # run_full_crawl is async — run it in its own event loop inside this sync task
+    models = asyncio.run(run_full_crawl(force=force))
+    print(f"[FLOW] ✅ Crawler bitti — {len(models)} model işlendi", flush=True)
     return len(models)
 
 
 @task(name="enricher", retries=2, retry_delay_seconds=10)
 def run_enricher_task(force: bool = False, single_slug: str | None = None):
     """Enrich unenriched/outdated models via Groq LLM."""
-    logger.info("=== Enricher starting ===")
+    print(f"\n{'═'*60}", flush=True)
+    print(f"[FLOW] ▶ ADIM 2 / 5 — ENRICHER", flush=True)
+    print(f"{'═'*60}", flush=True)
     stats = run_enricher(force=force, single_slug=single_slug)
-    logger.info(f"=== Enricher done — {stats} ===")
+    print(f"[FLOW] ✅ Enricher bitti — ok={stats.get('ok', 0)} | failed={stats.get('failed', 0)}", flush=True)
     return stats
 
 
 @task(name="validator", retries=2)
 def run_validator_task():
     """Validate enriched models, re-queue failures."""
-    logger.info("=== Validator starting ===")
+    print(f"\n{'═'*60}", flush=True)
+    print(f"[FLOW] ▶ ADIM 3 / 5 — VALIDATOR", flush=True)
+    print(f"{'═'*60}", flush=True)
     stats = run_validator()
-    logger.info(f"=== Validator done — {stats} ===")
+    print(f"[FLOW] ✅ Validator bitti — valid={stats.get('valid', 0)} | re_queued={stats.get('re_queued', 0)}", flush=True)
     return stats
 
 
 @task(name="exporter")
 def run_exporter_task() -> dict:
     """Export all enriched models to output/models.json."""
-    logger.info("=== Exporter starting ===")
+    print(f"\n{'═'*60}", flush=True)
+    print(f"[FLOW] ▶ ADIM 4 / 5 — EXPORTER", flush=True)
+    print(f"{'═'*60}", flush=True)
     stats = export_to_json()
-    logger.info(f"=== Exporter done — {stats} ===")
+    print(
+        f"[FLOW] ✅ Export bitti — {stats.get('total', 0)} model → {stats.get('output_path', '')}",
+        flush=True,
+    )
     return stats
 
 
 @task(name="pr-creator")
 def run_pr_creator_task(export_stats: dict | None = None) -> str | None:
     """Push models.json to GitHub and open a Pull Request."""
-    logger.info("=== PR Creator starting ===")
+    print(f"\n{'═'*60}", flush=True)
+    print(f"[FLOW] ▶ ADIM 5 / 5 — PR CREATOR", flush=True)
+    print(f"{'═'*60}", flush=True)
     pr_url = create_pull_request(export_stats=export_stats)
     if pr_url:
-        logger.info(f"=== PR Creator done — {pr_url} ===")
+        print(f"[FLOW] ✅ PR oluşturuldu — {pr_url}", flush=True)
     else:
-        logger.info("=== PR Creator done — no changes / skipped ===")
+        print(f"[FLOW] ⏭  PR atlandı (değişiklik yok veya dry-run)", flush=True)
     return pr_url
 
 
 # ── Flow ───────────────────────────────────────────────────────────────────────
 
 @flow(name="ollama-pipeline", log_prints=True)
-async def ollama_pipeline(
+def ollama_pipeline(
     skip_crawl: bool = False,
     skip_enrich: bool = False,
     force_crawl: bool = False,
@@ -99,24 +114,31 @@ async def ollama_pipeline(
     """
     init_db()
 
+    print(f"\n{'█'*60}", flush=True)
+    print(f"[PIPELINE] 🚀 OLLAMA PIPELINE BAŞLIYOR", flush=True)
+    print(f"[PIPELINE]    skip_crawl={skip_crawl} | skip_enrich={skip_enrich}", flush=True)
+    print(f"[PIPELINE]    force_crawl={force_crawl} | force_enrich={force_enrich}", flush=True)
+    print(f"[PIPELINE]    model={model!r} | dry_run={dry_run}", flush=True)
+    print(f"{'█'*60}", flush=True)
+
     # Step 1 — Crawl
     if not skip_crawl:
-        await run_crawler_task(force=force_crawl)
+        run_crawler_task(force=force_crawl)
     else:
-        logger.info("Skipping crawler (--skip-crawl).")
+        print("[FLOW] ⏭  ADIM 1 atlandı (--skip-crawl)", flush=True)
 
     # Step 2 — Enrich
     if not skip_enrich:
         enrich_stats = run_enricher_task(force=force_enrich, single_slug=model)
     else:
-        logger.info("Skipping enricher (--skip-enrich).")
+        print("[FLOW] ⏭  ADIM 2 atlandı (--skip-enrich)", flush=True)
         enrich_stats = {}
 
     # Step 3 — Validate (always runs unless dry-run)
     if not dry_run:
         val_stats = run_validator_task()
     else:
-        logger.info("Dry run — skipping validator, exporter, PR creator.")
+        print("[FLOW] ⏭  Dry-run — validator, exporter, PR creator atlandı", flush=True)
         return
 
     # Step 4 — Export
@@ -126,12 +148,12 @@ async def ollama_pipeline(
     pr_url = run_pr_creator_task(export_stats=export_stats)
 
     # Summary
-    logger.info("=" * 50)
-    logger.info("Pipeline complete!")
-    logger.info(f"  Export: {export_stats}")
-    logger.info(f"  Validation: {val_stats}")
-    logger.info(f"  PR: {pr_url or 'No PR (no changes or dry run)'}")
-    logger.info("=" * 50)
+    print(f"\n{'█'*60}", flush=True)
+    print(f"[PIPELINE] 🏁 PIPELINE TAMAMLANDI", flush=True)
+    print(f"[PIPELINE]    Export  : {export_stats.get('total', '?')} model → {export_stats.get('output_path', '?')}", flush=True)
+    print(f"[PIPELINE]    Validate: valid={val_stats.get('valid', '?')} | failed={val_stats.get('failed', '?')}", flush=True)
+    print(f"[PIPELINE]    PR      : {pr_url or '(PR oluşturulmadı)'}", flush=True)
+    print(f"{'█'*60}", flush=True)
 
     return {
         "export": export_stats,

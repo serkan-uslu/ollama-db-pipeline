@@ -187,9 +187,28 @@ def parse_model_detail_html(html: str) -> dict:
 
     memory_requirements = sorted(raw_entries, key=lambda x: x["size_gb"] or 999)
 
+    # ── APPLICATIONS ──────────────────────────────────────────────────────────
+    applications = []
+    for h2 in soup.find_all("h2", string=lambda t: t and t.strip() == "Applications"):
+        section = h2.find_parent(["section", "div"])
+        if section:
+            items = section.find_all("div", recursive=False) or section.find_all("li")
+            # Fallback: grab all text pairs (name + command)
+            texts = [t.strip() for t in section.stripped_strings if t.strip() and t.strip() != "Applications"]
+            i = 0
+            while i < len(texts):
+                name = texts[i]
+                launch_cmd = texts[i + 1] if i + 1 < len(texts) and texts[i + 1].startswith("ollama") else None
+                if launch_cmd:
+                    applications.append({"name": name, "launch_command": launch_cmd})
+                    i += 2
+                else:
+                    i += 1
+
     return {
         "readme": readme_text[:10000] if readme_text else None,
         "memory_requirements": memory_requirements or None,
+        "applications": applications or None,
     }
 
 
@@ -214,12 +233,15 @@ async def crawl_library(sort: str = "popular") -> list[dict]:
     Does NOT visit detail pages — that's done in crawl_model_detail().
     """
     url = f"{LIBRARY_URL}?sort={sort}"
+    print(f"\n{'─'*60}", flush=True)
+    print(f"[CRAWLER] 🌐 Library sayfası çekiliyor: {url}", flush=True)
     logger.info(f"Crawling library: {url}")
 
     async with httpx.AsyncClient() as client:
         html = await fetch_html(client, url)
 
     if not html:
+        print("[CRAWLER] ❌ Library sayfası alınamadı!", flush=True)
         logger.error("Library page fetch failed.")
         return []
 
@@ -286,6 +308,7 @@ async def crawl_library(sort: str = "popular") -> list[dict]:
             "is_uncensored_hint": is_uncensored,  # LLM will confirm later
         })
 
+    print(f"[CRAWLER] ✅ {len(models)} model bulundu", flush=True)
     logger.info(f"Found {len(models)} models on library page.")
     return models
 
@@ -302,7 +325,7 @@ async def crawl_model_detail(slug: str) -> dict:
         html = await fetch_html(client, url)
 
     if not html:
-        return {"readme": None, "memory_requirements": None}
+        return {"readme": None, "memory_requirements": None, "applications": None}
 
     return parse_model_detail_html(html)
 
@@ -361,7 +384,9 @@ def save_models_to_db(models: list[dict]) -> tuple[int, int]:
                 if raw["labels"]:
                     existing.labels = raw["labels"]
                 existing.readme = detail.get("readme")
+                existing.applications = detail.get("applications")
                 existing.memory_requirements = detail.get("memory_requirements")
+                existing.raw_html = raw.get("_html")
                 existing.min_ram_gb = min_ram_gb
                 existing.context_window = context_window
                 existing.speed_tier = speed_tier
@@ -387,7 +412,9 @@ def save_models_to_db(models: list[dict]) -> tuple[int, int]:
                     last_updated=last_updated,
                     last_updated_str=last_updated_str,
                     readme=detail.get("readme"),
+                    applications=detail.get("applications"),
                     memory_requirements=detail.get("memory_requirements"),
+                    raw_html=raw.get("_html"),
                     min_ram_gb=min_ram_gb,
                     context_window=context_window,
                     speed_tier=speed_tier,
@@ -399,12 +426,67 @@ def save_models_to_db(models: list[dict]) -> tuple[int, int]:
 
             if i % 20 == 0:
                 session.commit()
+                print(f"[CRAWLER] 💾 Checkpoint: {i}/{total} modeli kaydedildi", flush=True)
                 logger.info(f"  → Checkpoint saved ({i}/{total})")
 
         session.commit()
 
+    print(f"[CRAWLER] ✅ DB kaydı tamamlandı — Yeni: {inserted} | Güncellendi: {updated}", flush=True)
     logger.info(f"DB save complete. Inserted: {inserted}, Updated: {updated}")
     return inserted, updated
+
+
+# ── Re-parse Utility ──────────────────────────────────────────────────────────
+
+def reparse_from_html() -> tuple[int, int]:
+    """
+    Re-parse all stored raw_html values and update crawl fields (readme,
+    memory_requirements, applications) WITHOUT hitting the network.
+
+    Use this whenever parse_model_detail_html() logic is updated and
+    you want to re-extract new fields from already-crawled HTML.
+
+    Returns (updated, skipped) counts.
+    """
+    init_db()
+    updated = 0
+    skipped = 0
+
+    with Session(engine) as session:
+        models = list(session.exec(select(Model)).all())
+        total = len(models)
+        print(f"[REPARSE] {total} model için ham HTML'den yeniden parse ediliyor...", flush=True)
+
+        for i, model in enumerate(models, 1):
+            if not model.raw_html:
+                skipped += 1
+                continue
+
+            detail = parse_model_detail_html(model.raw_html)
+            model.readme = detail.get("readme")
+            model.applications = detail.get("applications")
+            model.memory_requirements = detail.get("memory_requirements")
+
+            mem = detail.get("memory_requirements") or []
+            valid_sizes = [r["size_gb"] for r in mem if r.get("size_gb") and r["size_gb"] > 0]
+            if valid_sizes:
+                model.min_ram_gb = round(min(valid_sizes), 1)
+                model.speed_tier = "fast" if model.min_ram_gb <= 2.5 else "medium" if model.min_ram_gb <= 6 else "slow"
+            ctx_values = [r["context_window"] for r in mem if r.get("context_window")]
+            if ctx_values:
+                model.context_window = max(ctx_values)
+
+            session.add(model)
+            updated += 1
+
+            if i % 50 == 0:
+                session.commit()
+                print(f"[REPARSE] {i}/{total} tamamlandı", flush=True)
+
+        session.commit()
+
+    print(f"[REPARSE] Bitti — Güncellendi: {updated} | Ham HTML yok: {skipped}", flush=True)
+    return updated, skipped
 
 
 # ── Full Crawl Pipeline ────────────────────────────────────────────────────────
@@ -430,18 +512,26 @@ async def run_full_crawl(force: bool = False) -> list[dict]:
         to_crawl = [m for m in raw_models if m["slug"] not in existing_slugs]
         skipped = len(raw_models) - len(to_crawl)
         if skipped:
+            print(f"[CRAWLER] ⏭  {skipped} model zaten DB'de, atlanıyor (--force-crawl ile zorla)", flush=True)
             logger.info(f"Skipping {skipped} already-crawled models (use --force-crawl to override).")
     else:
         to_crawl = raw_models
 
+    print(f"[CRAWLER] {'─'*60}", flush=True)
+    print(f"[CRAWLER] 📃 {len(to_crawl)} model için detail sayfaları çekiliyor...", flush=True)
     logger.info(f"Fetching detail pages for {len(to_crawl)} models...")
 
     async with httpx.AsyncClient() as client:
         for i, model in enumerate(to_crawl, 1):
             slug = model["slug"]
+            print(f"[CRAWLER] [{i:>3}/{len(to_crawl)}] 🔍 Detail: {slug}", flush=True)
             logger.info(f"[{i}/{len(to_crawl)}] Detail: {slug}")
             html = await fetch_html(client, f"{LIBRARY_URL}/{slug}")
-            model["_detail"] = parse_model_detail_html(html) if html else {}
+            detail = parse_model_detail_html(html) if html else {}
+            model["_detail"] = detail
+            model["_html"] = html  # raw HTML preserved for future re-parsing
+            if detail.get("applications"):
+                print(f"[CRAWLER]         📱 {len(detail['applications'])} application(s): {[a['name'] for a in detail['applications']]}", flush=True)
             await asyncio.sleep(settings.request_delay)
 
     save_models_to_db(to_crawl)

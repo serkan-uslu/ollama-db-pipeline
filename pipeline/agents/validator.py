@@ -27,7 +27,7 @@ VALIDATION_RULES: dict[str, tuple[callable, str]] = {
     "complexity":   (lambda v: v is not None, "complexity must not be null"),
     "best_for":     (lambda v: bool(v) and len(v) >= 10, "best_for must be at least 10 chars"),
     "strengths":    (lambda v: bool(v) and len(v) >= 1, "strengths must have at least 1 item"),
-    "limitations":  (lambda v: bool(v) and len(v) >= 1, "limitations must have at least 1 item"),
+    "limitations":  (lambda v: v is not None, "limitations must not be null"),
     "model_family": (lambda v: v is not None, "model_family must not be null"),
     "target_audience": (lambda v: bool(v) and len(v) >= 1, "target_audience must have at least 1 item"),
 }
@@ -105,24 +105,30 @@ def validate_all(session: Session) -> dict:
             model.validation_failed = None
             session.add(model)
             results["valid"] += 1
+            print(f"[VALIDATOR] ✅ {model.model_identifier} — geçerli", flush=True)
             logger.info(f"  ✓ {model.model_identifier} — valid")
         else:
             current_retries = retry_counts.get(str(model.id), 0)
             results["invalid"] += 1
 
+            print(
+                f"[VALIDATOR] ⚠️  {model.model_identifier} — "
+                f"{len(failures)} kural hatası: {'; '.join(failures)}",
+                flush=True,
+            )
             logger.warning(
                 f"  ✗ {model.model_identifier} — {len(failures)} rule(s) failed: "
                 f"{'; '.join(failures)}"
             )
 
             if current_retries < MAX_RETRIES:
-                # Re-queue for enrichment by resetting enrich_version
                 model.enrich_version = None
                 model.validated = None
                 model.validation_failed = None
                 retry_counts[str(model.id)] = current_retries + 1
                 session.add(model)
                 results["re_queued"] += 1
+                print(f"[VALIDATOR]    → Yeniden sıraya alındı (deneme {current_retries + 1}/{MAX_RETRIES})", flush=True)
                 logger.info(
                     f"    → Re-queued (attempt {current_retries + 1}/{MAX_RETRIES})"
                 )
@@ -131,11 +137,20 @@ def validate_all(session: Session) -> dict:
                 model.validated = False
                 session.add(model)
                 results["failed"] += 1
+                print(f"[VALIDATOR]    → {MAX_RETRIES} denemeden sonra validation_failed işaretlendi", flush=True)
                 logger.warning(
                     f"    → Marked as validation_failed after {MAX_RETRIES} attempts"
                 )
 
     session.commit()
+    print(
+        f"[VALIDATOR] {'─'*60}\n"
+        f"[VALIDATOR] 🏁 Tamamlandı — "
+        f"✅ Geçerli: {results['valid']} | "
+        f"🔄 Yeniden sıraya: {results['re_queued']} | "
+        f"❌ Başarısız: {results['failed']}",
+        flush=True,
+    )
     logger.info(
         f"Validation complete — "
         f"valid: {results['valid']} | "
@@ -147,6 +162,8 @@ def validate_all(session: Session) -> dict:
 
 def run_validator() -> dict:
     """Entry point for the Prefect task — initialises DB and runs validation."""
+    print(f"\n[VALIDATOR] {'─'*60}", flush=True)
+    print(f"[VALIDATOR] 🔍 Validation başlıyor...", flush=True)
     init_db()
     with Session(engine) as session:
         return validate_all(session)
