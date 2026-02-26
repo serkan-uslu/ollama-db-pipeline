@@ -9,9 +9,9 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # --- LLM / API Keys ---
-    groq_api_key: str
-    cross_repo_token: str
+    # --- LLM / API Keys (required at enrich + PR steps only) ---
+    groq_api_key: str | None = None
+    cross_repo_token: str | None = None
 
     # --- GitHub PR Target ---
     github_target_repo: str = "serkan-uslu/ollama-explorer"
@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # ignore unknown env vars (e.g. PROJECT_NAME from old .env)
 
 
 settings = Settings()
