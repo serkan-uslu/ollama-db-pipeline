@@ -1,0 +1,76 @@
+name: Update Ollama Models
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'  # Every Monday at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      skip_crawl:
+        description: 'Skip crawling (use existing DB)'
+        type: boolean
+        default: false
+      force_enrich:
+        description: 'Force re-enrich all models'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (no export / no PR)'
+        type: boolean
+        default: false
+
+jobs:
+  update-models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout pipeline repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry/virtualenvs
+          key: ${{ runner.os }}-poetry-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Install Playwright (for Crawl4AI)
+        run: poetry run playwright install chromium --with-deps
+
+      - name: Run pipeline
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          poetry run python main.py \
+            ${{ inputs.skip_crawl == 'true' && '--skip-crawl' || '' }} \
+            ${{ inputs.force_enrich == 'true' && '--force-enrich' || '' }} \
+            ${{ inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      - name: Upload DB artifact (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-db-${{ github.run_id }}
+          path: ollama.db
+          retention-days: 7
+
+      - name: Upload models.json artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-json-${{ github.run_id }}
+          path: output/models.json
+          retention-days: 30
