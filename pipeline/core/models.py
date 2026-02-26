@@ -69,7 +69,9 @@ class Model(SQLModel, table=True):
 
     license: Optional[str] = Field(default=None)
     base_model: Optional[str] = Field(default=None)
+    model_family: Optional[str] = Field(default=None)    # "Llama" | "Mistral" | "Qwen" | ...
     is_fine_tuned: Optional[bool] = Field(default=None)
+    is_uncensored: Optional[bool] = Field(default=None)  # True if uncensored/abliterated
 
     strengths: Optional[list] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
