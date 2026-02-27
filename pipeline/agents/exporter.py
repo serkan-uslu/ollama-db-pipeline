@@ -76,6 +76,11 @@ def model_to_dict(m: Model) -> dict:
         "strengths": m.strengths or [],
         "limitations": m.limitations or [],
         "target_audience": m.target_audience or [],
+        "creator_org": m.creator_org,
+        "is_multimodal": m.is_multimodal,
+        "huggingface_url": m.huggingface_url,
+        "benchmark_scores": m.benchmark_scores or [],
+        "parameter_sizes": m.parameter_sizes or [],
 
         # ── Stats ─────────────────────────────────────────────────────────────
         "pulls": m.pulls,

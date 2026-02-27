@@ -154,6 +154,57 @@ ModelFamily = Literal[
 
 # ── Enrichment Output Schema ───────────────────────────────────────────────────
 
+# ── Sub-schemas for multi-call enrichment (6 focused calls) ───────────────────
+
+class DomainFamilyOutput(BaseModel):
+    """Call 1: domain + model_family only."""
+    domain: str
+    model_family: str
+
+
+class UseCasesOutput(BaseModel):
+    """Call 2: use_cases only."""
+    use_cases: list[str] = Field(min_length=1, max_length=5)
+
+
+class BasicsOutput(BaseModel):
+    """Call 3: languages, complexity, booleans."""
+    languages: list[str] = Field(min_length=1, max_length=8)
+    complexity: str
+    is_fine_tuned: bool
+    is_uncensored: bool
+
+
+class SummaryOutput(BaseModel):
+    """Call 4: best_for + license."""
+    best_for: str = Field(min_length=10, max_length=300)
+    license: str | None = None
+
+
+class QualityOutput(BaseModel):
+    """Call 5: strengths, limitations, target_audience."""
+    strengths: list[str] = Field(min_length=1, max_length=5)
+    limitations: list[str] = Field(min_length=0, max_length=5)
+    target_audience: list[str] = Field(min_length=1, max_length=4)
+
+
+class MetadataOutput(BaseModel):
+    """Call 6: technical metadata from HTML sections."""
+    creator_org: str | None = None
+    is_multimodal: bool
+    base_model: str | None = None
+    huggingface_url: str | None = None
+    benchmark_scores: list[dict] | None = None
+    parameter_sizes: list[str] | None = None
+
+
+# keep old aliases so existing imports don't break
+ClassificationOutput = BasicsOutput
+DescriptionOutput = SummaryOutput
+
+
+# ── Full combined schema ───────────────────────────────────────────────────────
+
 class EnrichmentOutput(BaseModel):
     """
     Structured output schema sent to instructor + Groq.
@@ -230,4 +281,44 @@ class EnrichmentOutput(BaseModel):
         min_length=1,
         max_length=4,
         description="Target audience groups (1-4 items).",
+    )
+
+    # ── Extended Metadata ─────────────────────────────────────────────────────
+    creator_org: str | None = Field(
+        default=None,
+        description=(
+            "Organisation that created/published the model. "
+            "E.g. 'Meta', 'Mistral AI', 'Google DeepMind', 'Alibaba Cloud', 'Microsoft', "
+            "'DeepSeek', 'Cohere', 'IBM'. Infer from model name or README."
+        ),
+    )
+    is_multimodal: bool = Field(
+        description=(
+            "True if the model processes more than one modality (e.g. text+image, text+audio). "
+            "False for text-only models."
+        ),
+    )
+    huggingface_url: str | None = Field(
+        default=None,
+        description=(
+            "Full HuggingFace model URL if mentioned in the README or description. "
+            "Format: https://huggingface.co/<org>/<model>. null if not found."
+        ),
+    )
+    benchmark_scores: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Benchmark results mentioned in the README or description. "
+            "Each item: {\"name\": \"MMLU\", \"score\": 85.2, \"unit\": \"%\"}. "
+            "Common benchmarks: MMLU, HumanEval, GSM8K, SWE-bench, MATH, HellaSwag, ARC. "
+            "null if no benchmarks are mentioned."
+        ),
+    )
+    parameter_sizes: list[str] | None = Field(
+        default=None,
+        description=(
+            "Available parameter size variants for this model. "
+            "E.g. ['1.5B', '7B', '13B', '70B', '405B']. "
+            "Read from the size labels or README. null if only one size exists or unknown."
+        ),
     )

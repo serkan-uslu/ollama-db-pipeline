@@ -79,6 +79,17 @@ class Model(SQLModel, table=True):
     model_family: Optional[str] = Field(default=None)    # "Llama" | "Mistral" | "Qwen" | ...
     is_fine_tuned: Optional[bool] = Field(default=None)
     is_uncensored: Optional[bool] = Field(default=None)  # True if uncensored/abliterated
+    is_multimodal: Optional[bool] = Field(default=None)  # True if model handles vision/audio+text
+
+    creator_org: Optional[str] = Field(default=None)       # e.g. "Meta", "Mistral AI", "Google DeepMind"
+    huggingface_url: Optional[str] = Field(default=None)   # https://huggingface.co/...
+
+    benchmark_scores: Optional[list] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )  # [{name: "MMLU", score: 85.2, unit: "%"}, ...]
+    parameter_sizes: Optional[list] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )  # ["1.5B", "7B", "13B", "70B"]
 
     strengths: Optional[list] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
