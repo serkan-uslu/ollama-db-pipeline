@@ -198,9 +198,7 @@ class MetadataOutput(BaseModel):
     parameter_sizes: list[str] | None = None
 
 
-# keep old aliases so existing imports don't break
-ClassificationOutput = BasicsOutput
-DescriptionOutput = SummaryOutput
+
 
 
 # ── Full combined schema ───────────────────────────────────────────────────────

@@ -1,0 +1,88 @@
+name: 🐛 Bug Report
+description: Something in the pipeline is broken or behaving unexpectedly.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as you can — the more context you give, the faster we can fix it.
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent / step failed?
+      options:
+        - Crawler (crawling ollama.com/library)
+        - Enricher (LLM enrichment)
+        - Validator (data quality checks)
+        - Exporter (JSON output)
+        - PR Creator (GitHub PR step)
+        - Flow / Orchestration
+        - DB / Settings / Core
+        - GitHub Actions workflow
+        - Other / Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: 'Describe what went wrong...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: 'Describe the expected behaviour...'
+    validations:
+      required: false
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Error traceback / logs
+      description: Paste the full error message or pipeline log output here.
+      render: text
+      placeholder: |
+        Traceback (most recent call last):
+          ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `poetry run python main.py --skip-crawl`
+        2. See error in enricher step
+    validations:
+      required: false
+
+  - type: input
+    id: llm_provider
+    attributes:
+      label: LLM Provider & Model
+      placeholder: 'e.g. ollama / gemma3:27b  or  groq / llama-3.3-70b-versatile'
+    validations:
+      required: false
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      placeholder: 'e.g. 3.13.1'
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: 'e.g. macOS 15.3 / Ubuntu 22.04'
+    validations:
+      required: false

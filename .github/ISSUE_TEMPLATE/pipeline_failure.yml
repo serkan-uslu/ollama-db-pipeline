@@ -1,0 +1,53 @@
+name: ⚙️ Pipeline Run Failure
+description: The scheduled GitHub Actions pipeline failed or produced incomplete results.
+labels: ['pipeline', 'ci']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report a failed or degraded automated pipeline run (GitHub Actions schedule or manual trigger).
+
+  - type: input
+    id: run_url
+    attributes:
+      label: GitHub Actions run URL
+      placeholder: 'https://github.com/serkan-uslu/ollama-db-pipeline/actions/runs/...'
+    validations:
+      required: false
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which step failed?
+      options:
+        - Step 1 — Crawler
+        - Step 2 — Enricher
+        - Step 3 — Validator
+        - Step 3b — Re-Enricher / Re-Validator
+        - Step 4 — Exporter
+        - Step 5 — PR Creator
+        - Dependency install / setup
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste the relevant portion of the Actions log here.
+      render: text
+      placeholder: |
+        [FLOW] ▶ ADIM 2 / 5 — ENRICHER
+        ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Did models.json get updated? Was the PR opened? Was any data lost?
+      placeholder: 'e.g. PR was not created — models.json is 3 weeks out of date'
+    validations:
+      required: false

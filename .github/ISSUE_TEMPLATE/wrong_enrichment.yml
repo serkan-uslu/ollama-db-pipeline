@@ -1,0 +1,80 @@
+name: 📊 Wrong Enrichment Data
+description: A model's AI-generated metadata (domain, use-cases, complexity, RAM, etc.) is incorrect or outdated.
+labels: ['data']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Model metadata is generated automatically by the LLM enrichment pipeline and may contain errors.
+        Help us improve quality by reporting inaccurate fields — we can bump `ENRICH_VERSION` to trigger a re-enrichment run.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model identifier
+      placeholder: 'e.g. deepseek-r1'
+    validations:
+      required: true
+
+  - type: input
+    id: ollama_url
+    attributes:
+      label: Ollama library URL
+      placeholder: 'e.g. https://ollama.com/library/deepseek-r1'
+    validations:
+      required: false
+
+  - type: dropdown
+    id: field
+    attributes:
+      label: Which field is wrong?
+      options:
+        - domain
+        - use_cases
+        - complexity
+        - best_for
+        - ai_languages
+        - model_family
+        - is_fine_tuned
+        - is_uncensored
+        - is_multimodal
+        - strengths
+        - limitations
+        - target_audience
+        - license
+        - base_model
+        - creator_org
+        - huggingface_url
+        - parameter_sizes
+        - benchmark_scores
+        - min_ram_gb / memory_requirements (crawler data)
+        - context_window (crawler data)
+        - speed_tier
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current (wrong) value
+      placeholder: 'What does the pipeline currently produce for this field?'
+    validations:
+      required: true
+
+  - type: textarea
+    id: correct
+    attributes:
+      label: Correct value
+      placeholder: 'What should it be instead?'
+    validations:
+      required: true
+
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: Link to official Ollama page, model card, or documentation that confirms the correct value.
+      placeholder: 'https://ollama.com/library/...'
+    validations:
+      required: false

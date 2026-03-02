@@ -71,8 +71,8 @@ def validate_all(session: Session) -> dict:
     """
     Validate all enriched models in DB.
     - Valid → validated=True
-    - Invalid + retries < MAX_RETRIES → reset enrich_version to trigger re-enrichment
-    - Invalid + retries >= MAX_RETRIES → validation_failed=True
+    - Invalid + validation_retries < MAX_RETRIES → reset enrich_version to trigger re-enrichment
+    - Invalid + validation_retries >= MAX_RETRIES → validation_failed=True
 
     Returns summary: {total, valid, invalid, re_queued, failed}
     """
@@ -85,9 +85,6 @@ def validate_all(session: Session) -> dict:
 
     total = len(models)
     results = {"total": total, "valid": 0, "invalid": 0, "re_queued": 0, "failed": 0}
-
-    # Track per-run retry counts in memory (keyed by model id)
-    retry_counts: dict = {}
 
     for model in models:
         # Skip already-validated or already-failed models
@@ -103,12 +100,13 @@ def validate_all(session: Session) -> dict:
         if is_valid:
             model.validated = True
             model.validation_failed = None
+            model.validation_retries = 0
             session.add(model)
             results["valid"] += 1
             print(f"[VALIDATOR] ✅ {model.model_identifier} — geçerli", flush=True)
             logger.info(f"  ✓ {model.model_identifier} — valid")
         else:
-            current_retries = retry_counts.get(str(model.id), 0)
+            current_retries = model.validation_retries or 0
             results["invalid"] += 1
 
             print(
@@ -125,7 +123,7 @@ def validate_all(session: Session) -> dict:
                 model.enrich_version = None
                 model.validated = None
                 model.validation_failed = None
-                retry_counts[str(model.id)] = current_retries + 1
+                model.validation_retries = current_retries + 1
                 session.add(model)
                 results["re_queued"] += 1
                 print(f"[VALIDATOR]    → Yeniden sıraya alındı (deneme {current_retries + 1}/{MAX_RETRIES})", flush=True)

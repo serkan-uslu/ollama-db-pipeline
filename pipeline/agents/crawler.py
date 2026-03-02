@@ -374,6 +374,7 @@ def save_models_to_db(models: list[dict]) -> tuple[int, int]:
             ).first()
 
             if existing:
+                # Always refresh library-page stats
                 existing.pulls = pulls
                 existing.tags = raw["tags_count"]
                 existing.last_updated = last_updated
@@ -383,17 +384,20 @@ def save_models_to_db(models: list[dict]) -> tuple[int, int]:
                 existing.capabilities = raw["capabilities"]
                 if raw["labels"]:
                     existing.labels = raw["labels"]
-                existing.readme = detail.get("readme")
-                existing.applications = detail.get("applications")
-                existing.memory_requirements = detail.get("memory_requirements")
-                existing.raw_html = raw.get("_html")
-                existing.min_ram_gb = min_ram_gb
-                existing.context_window = context_window
-                existing.speed_tier = speed_tier
                 existing.timestamp = now
                 # Only set uncensored hint if not already confirmed by LLM
                 if existing.is_uncensored is None:
                     existing.is_uncensored = raw.get("is_uncensored_hint")
+                # Only overwrite detail fields when a detail page was actually fetched
+                # (_has_detail=False means this was a stats-only refresh run)
+                if raw.get("_has_detail", False):
+                    existing.readme = detail.get("readme")
+                    existing.applications = detail.get("applications")
+                    existing.memory_requirements = detail.get("memory_requirements")
+                    existing.raw_html = raw.get("_html")
+                    existing.min_ram_gb = min_ram_gb
+                    existing.context_window = context_window
+                    existing.speed_tier = speed_tier
                 session.add(existing)
                 updated += 1
             else:
@@ -493,46 +497,66 @@ def reparse_from_html() -> tuple[int, int]:
 
 async def run_full_crawl(force: bool = False) -> list[dict]:
     """
-    1. Crawl library page to get all model slugs.
-    2. For each model, fetch detail page (readme + memory).
-    3. Save to DB via upsert.
-    Returns the full list of enriched model dicts.
+    1. Crawl library page — refresh stats (pulls, last_updated, etc.) for ALL models.
+    2. Detect new slugs not yet in DB.
+    3. Fetch detail pages ONLY for new models (readme, memory requirements).
+       If force=True, re-fetch detail pages for all models.
+    4. Save to DB — stats update for existing, full insert/update for new.
+    Returns the full raw_models list.
     """
     raw_models = await crawl_library()
     if not raw_models:
         logger.error("No models found on library page.")
         return []
 
-    # Filter already-crawled if not forcing
-    if not force:
-        with Session(engine) as session:
-            existing_slugs = set(
-                session.exec(select(Model.model_identifier)).all()
-            )
-        to_crawl = [m for m in raw_models if m["slug"] not in existing_slugs]
-        skipped = len(raw_models) - len(to_crawl)
-        if skipped:
-            print(f"[CRAWLER] ⏭  {skipped} model zaten DB'de, atlanıyor (--force-crawl ile zorla)", flush=True)
-            logger.info(f"Skipping {skipped} already-crawled models (use --force-crawl to override).")
-    else:
-        to_crawl = raw_models
+    # Determine which models are new vs already in DB
+    with Session(engine) as session:
+        existing_slugs = set(session.exec(select(Model.model_identifier)).all())
+
+    new_models = [m for m in raw_models if m["slug"] not in existing_slugs]
+    existing_models = [m for m in raw_models if m["slug"] in existing_slugs]
 
     print(f"[CRAWLER] {'─'*60}", flush=True)
-    print(f"[CRAWLER] 📃 {len(to_crawl)} model için detail sayfaları çekiliyor...", flush=True)
-    logger.info(f"Fetching detail pages for {len(to_crawl)} models...")
+    print(
+        f"[CRAWLER] 📊 {len(new_models)} yeni model | "
+        f"{len(existing_models)} mevcut (stats yenilenecek)",
+        flush=True,
+    )
+    logger.info(
+        f"Library: {len(new_models)} new, {len(existing_models)} existing (stats refresh)"
+    )
+
+    # Detail pages: always for new models, existing only if force=True
+    to_fetch_detail = raw_models if force else new_models
+    stats_only = [] if force else existing_models
+
+    # Mark stats-only models so save_models_to_db won't overwrite detail fields
+    for m in stats_only:
+        m["_detail"] = {}
+        m["_html"] = None
+        m["_has_detail"] = False
+
+    print(f"[CRAWLER] 📃 {len(to_fetch_detail)} model için detail sayfası çekiliyor...", flush=True)
+    logger.info(f"Fetching detail pages for {len(to_fetch_detail)} models...")
 
     async with httpx.AsyncClient() as client:
-        for i, model in enumerate(to_crawl, 1):
+        for i, model in enumerate(to_fetch_detail, 1):
             slug = model["slug"]
-            print(f"[CRAWLER] [{i:>3}/{len(to_crawl)}] 🔍 Detail: {slug}", flush=True)
-            logger.info(f"[{i}/{len(to_crawl)}] Detail: {slug}")
+            print(f"[CRAWLER] [{i:>3}/{len(to_fetch_detail)}] 🔍 Detail: {slug}", flush=True)
+            logger.info(f"[{i}/{len(to_fetch_detail)}] Detail: {slug}")
             html = await fetch_html(client, f"{LIBRARY_URL}/{slug}")
             detail = parse_model_detail_html(html) if html else {}
             model["_detail"] = detail
             model["_html"] = html  # raw HTML preserved for future re-parsing
+            model["_has_detail"] = True
             if detail.get("applications"):
-                print(f"[CRAWLER]         📱 {len(detail['applications'])} application(s): {[a['name'] for a in detail['applications']]}", flush=True)
+                print(
+                    f"[CRAWLER]         📱 {len(detail['applications'])} uygulama: "
+                    f"{[a['name'] for a in detail['applications']]}",
+                    flush=True,
+                )
             await asyncio.sleep(settings.request_delay)
 
-    save_models_to_db(to_crawl)
-    return to_crawl
+    # Save ALL models: existing get stats refresh, new get full insert
+    save_models_to_db(raw_models)
+    return raw_models

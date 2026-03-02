@@ -27,6 +27,14 @@ OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
 DEFAULT_OUTPUT_PATH = OUTPUT_DIR / "models.json"
 
 
+def _output_path_for_model(llm_model: str | None) -> Path:
+    """Return output/models_<llm_model>.json or output/models.json if no model."""
+    if not llm_model:
+        return DEFAULT_OUTPUT_PATH
+    safe = llm_model.replace(":", "-").replace("/", "-")
+    return OUTPUT_DIR / f"models_{safe}.json"
+
+
 # ── Serializer (ported + extended from legacy/export_json.py) ─────────────────
 
 def model_to_dict(m: Model) -> dict:
@@ -100,15 +108,22 @@ def model_to_dict(m: Model) -> dict:
 
 # ── Export Function ────────────────────────────────────────────────────────────
 
-def export_to_json(output_path: str | Path = DEFAULT_OUTPUT_PATH) -> dict:
+def export_to_json(output_path: str | Path | None = None) -> dict:
     """
     Export all enriched models to JSON.
+    If output_path is None, auto-detects filename from LLM_MODEL setting.
     Includes validated=True models AND enriched-but-not-yet-validated models.
     Excludes models with no enrichment at all.
     Sorts by pulls descending.
 
     Returns export stats dict.
     """
+    if output_path is None:
+        try:
+            from pipeline.core.settings import settings
+            output_path = _output_path_for_model(settings.llm_model)
+        except Exception:
+            output_path = DEFAULT_OUTPUT_PATH
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

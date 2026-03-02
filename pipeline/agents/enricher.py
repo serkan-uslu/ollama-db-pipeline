@@ -18,11 +18,13 @@ Parallelism:
 instructor handles LLM retries automatically (max_retries=3).
 """
 
+import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
 
 import instructor
+from bs4 import BeautifulSoup
 from openai import OpenAI
 from sqlmodel import Session, select
 
@@ -41,40 +43,13 @@ from pipeline.schemas.enrichment import (
 
 logger = logging.getLogger(__name__)
 
-# ── System Prompt ──────────────────────────────────────────────────────────────
-
-SYSTEM_PROMPT = """You are an AI model metadata expert specialising in Ollama open-source models.
-Your job is to analyse model listings and extract accurate, structured metadata.
-
-Rules:
-- Be precise and concise — avoid filler phrases.
-- Use ALL provided sections: description, capabilities, README, benchmarks, license, HuggingFace info.
-- For is_uncensored: check for keywords like 'uncensored', 'abliterated', 'no restrictions', 'DAN'.
-- For model_family: infer from the model name (e.g. llama3.1→Llama, mistral→Mistral, gemma→Gemma, phi→Phi, qwen→Qwen, deepseek→DeepSeek).
-- For languages: include 'Multilingual' if the model supports many languages; list specific ones if named.
-- For license: scan the README and license_mentions carefully — return null only if truly absent.
-- For creator_org: infer from model name if not explicitly stated (llama→Meta, mistral→Mistral AI, gemma→Google DeepMind, phi→Microsoft, qwen→Alibaba Cloud, deepseek→DeepSeek, granite→IBM).
-- For is_multimodal: true only if vision/image/audio processing is explicitly mentioned.
-- For benchmark_scores: only include scores with actual numeric values — skip vague comparisons.
-- For parameter_sizes: list all size variants from the labels or README (e.g. ['7B','13B','70B']).
-- For huggingface_url: use the exact URL from hf_links if present; null otherwise.
-- Always respond with valid structured output matching the schema exactly.
-"""
-
-
-# ── Prompt Builder (ported from legacy/enrich.py) ─────────────────────────────
+# ── HTML Section Extractor ────────────────────────────────────────────────────
 
 def _extract_html_sections(html: str) -> dict:
     """
     Extract structured text sections from raw HTML using BeautifulSoup.
     Returns a dict of named sections that get injected into the enrichment prompt.
     """
-    import re
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        return {}
-
     soup = BeautifulSoup(html, "html.parser")
     sections: dict = {}
 
@@ -144,57 +119,10 @@ def _extract_html_sections(html: str) -> dict:
 
 
 def clean_readme(raw: str | None, max_chars: int = 1200) -> str:
-    """Trim and clean README snippet for prompt inclusion (fallback when no raw_html)."""
-    import re
+    """Trim and clean README snippet for prompt inclusion."""
     if not raw:
         return "N/A"
     return re.sub(r"\s+", " ", raw).strip()[:max_chars]
-
-
-def build_prompt(model: Model) -> str:
-    """Build the user-facing prompt for LLM enrichment.
-    
-    When raw_html is available, extracts rich structured sections via BeautifulSoup.
-    Falls back to the stored readme text otherwise.
-    """
-    import json
-
-    # ── Try HTML extraction first ─────────────────────────────────────────────
-    html_sections = _extract_html_sections(model.raw_html) if model.raw_html else {}
-    readme_text = html_sections.get("readme") or clean_readme(model.readme)
-
-    # ── Build extra context block from HTML sections ──────────────────────────
-    extras: list[str] = []
-    if html_sections.get("hf_links"):
-        extras.append(f"HuggingFace links : {html_sections['hf_links']}")
-    if html_sections.get("context_mentions"):
-        extras.append(f"Context mentions  : {html_sections['context_mentions']}")
-    if html_sections.get("license_mentions"):
-        extras.append(f"License mentions  : {html_sections['license_mentions']}")
-    if html_sections.get("benchmark_mentions"):
-        extras.append(f"Benchmark mentions: {html_sections['benchmark_mentions']}")
-    if html_sections.get("applications_raw"):
-        extras.append(f"Applications raw  : {html_sections['applications_raw']}")
-    extra_block = ("\n" + "\n".join(extras)) if extras else ""
-
-    return f"""Analyse this Ollama AI model listing and return structured metadata.
-
-Model      : {model.model_identifier}
-Name       : {model.model_name}
-Description: {model.description or 'N/A'}
-Capabilities: {json.dumps(model.capabilities or [])}
-Size labels: {json.dumps(model.labels or [])}  ← use these for parameter_sizes
-Min RAM    : {model.min_ram_gb} GB
-Context    : {model.context_window or 'N/A'} tokens{extra_block}
-README     : {readme_text}
-
-Fill every field accurately. Key field notes:
-- parameter_sizes: derive from size labels above (e.g. ['7B','70B']) — null only if single-size model.
-- huggingface_url: use exact URL from HuggingFace links above if present.
-- benchmark_scores: use Benchmark mentions above; only include numeric scores.
-- license: check License mentions above first, then README.
-- is_multimodal: true only if vision/image/audio is explicitly mentioned.
-"""
 
 
 # ── Client Factory ─────────────────────────────────────────────────────────────
@@ -389,7 +317,6 @@ Use ONLY the exact strings above."""
 
 
 def _p3_basics(model: Model) -> str:
-    import json
     return f"""Model: {model.model_identifier} — {model.description or ''} — sizes: {json.dumps(model.labels or [])}
 
 Return JSON with exactly 4 fields:
@@ -401,8 +328,7 @@ Return JSON with exactly 4 fields:
 If language unknown, use ["English"]. Use ONLY exact strings."""
 
 
-def _p4_summary(model: Model) -> str:
-    readme = clean_readme(model.readme, max_chars=500)
+def _p4_summary(model: Model, readme: str) -> str:
     return f"""Model: {model.model_identifier} — {model.description or ''}
 README: {readme}
 
@@ -423,7 +349,6 @@ Use ONLY the exact target_audience strings above."""
 
 
 def _p6_metadata(model: Model, html_sections: dict) -> str:
-    import json
     hf = html_sections.get('hf_links', [])
     bench = html_sections.get('benchmark_mentions', [])
     sizes = json.dumps(model.labels or [])
@@ -460,9 +385,15 @@ def _call(client, response_model, prompt: str, label: str, model_id: str):
 # ── Core Enrichment Function (thread-safe — no DB access) ─────────────────────
 
 def enrich_model(model: Model) -> EnrichmentOutput | None:
-    """6 small focused LLM calls → merge into EnrichmentOutput."""
+    """6 small focused LLM calls → merge into EnrichmentOutput.
+
+    Calls 1-5 are required (core metadata). Call 6 (html metadata) is best-effort:
+    if it fails, falls back to None values rather than dropping the whole model.
+    """
     client = _make_client()
     html_sections = _extract_html_sections(model.raw_html) if model.raw_html else {}
+    # Use html-extracted readme when available, fall back to stored readme
+    readme = html_sections.get("readme") or clean_readme(model.readme, max_chars=500)
     mid = model.model_identifier
 
     c1 = _call(client, DomainFamilyOutput, _p1_domain_family(model), "Call1/DomainFamily", mid)
@@ -474,14 +405,14 @@ def enrich_model(model: Model) -> EnrichmentOutput | None:
     c3 = _call(client, BasicsOutput, _p3_basics(model), "Call3/Basics", mid)
     if not c3: return None
 
-    c4 = _call(client, SummaryOutput, _p4_summary(model), "Call4/Summary", mid)
+    c4 = _call(client, SummaryOutput, _p4_summary(model, readme), "Call4/Summary", mid)
     if not c4: return None
 
     c5 = _call(client, QualityOutput, _p5_quality(model), "Call5/Quality", mid)
     if not c5: return None
 
+    # Call 6 is best-effort — html metadata enriches but isn't required
     c6 = _call(client, MetadataOutput, _p6_metadata(model, html_sections), "Call6/Metadata", mid)
-    if not c6: return None
 
     return EnrichmentOutput(
         domain=_map_domain(c1.domain),
@@ -496,12 +427,12 @@ def enrich_model(model: Model) -> EnrichmentOutput | None:
         strengths=c5.strengths,
         limitations=c5.limitations or [],
         target_audience=_map_audience(c5.target_audience),
-        creator_org=c6.creator_org if c6.creator_org and c6.creator_org.lower() not in ("unknown", "n/a") else None,
-        is_multimodal=c6.is_multimodal,
-        base_model=c6.base_model,
-        huggingface_url=c6.huggingface_url,
-        benchmark_scores=c6.benchmark_scores,
-        parameter_sizes=c6.parameter_sizes,
+        creator_org=c6.creator_org if c6 and c6.creator_org and c6.creator_org.lower() not in ("unknown", "n/a") else None,
+        is_multimodal=c6.is_multimodal if c6 else False,
+        base_model=c6.base_model if c6 else None,
+        huggingface_url=c6.huggingface_url if c6 else None,
+        benchmark_scores=c6.benchmark_scores if c6 else None,
+        parameter_sizes=c6.parameter_sizes if c6 else None,
     )
 
 

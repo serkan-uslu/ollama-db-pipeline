@@ -1,0 +1,54 @@
+name: 💡 Feature Request
+description: Suggest a new feature or improvement to the pipeline.
+labels: ['enhancement']
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the pipeline does this affect?
+      options:
+        - Crawler — scraping / parsing logic
+        - Enricher — LLM prompts, schemas, provider support
+        - Validator — quality rules
+        - Exporter — output format / fields
+        - PR Creator — GitHub integration
+        - Flow / Orchestration
+        - CLI interface
+        - GitHub Actions / scheduling
+        - Data schema (models.json shape)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      placeholder: "e.g. The enricher only supports Ollama and Groq, but I'd like to use OpenAI..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      placeholder: 'Describe what you would like to see...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: 'Any other approaches you have thought about?'
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Does this change the shape of models.json?
+      description: If yes, the [ollama-explorer](https://github.com/serkan-uslu/ollama-explorer) frontend may also need to be updated.
+      options:
+        - label: Yes — adds / removes / renames fields in the exported JSON
+        - label: No — internal pipeline change only

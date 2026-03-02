@@ -105,6 +105,7 @@ class Model(SQLModel, table=True):
     enrich_version: Optional[int] = Field(default=None)
     validated: Optional[bool] = Field(default=None)
     validation_failed: Optional[bool] = Field(default=None)
+    validation_retries: Optional[int] = Field(default=0)  # persistent retry counter across runs
     timestamp: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),

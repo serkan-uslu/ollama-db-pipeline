@@ -1,12 +1,54 @@
-# 🦙 ollama-pipeline
+# ⛏️ Ollama Miner
+
+<table>
+<tr>
+<td width="210">
+  <img src="assets/olli-miner.jpg" alt="Olli the Data Miner — ollama-pipeline mascot" width="195" style="border-radius: 14px;" />
+</td>
+<td>
+
+### The data engine behind [Ollama Explorer](https://ollama-explorer.vercel.app)
+
+> **Ollama has 200+ open-source AI models. Finding the right one is painful.**
+>
+> The official library shows a wall of model cards with almost no filtering. You open dozens of tabs, read raw descriptions, and still can't tell if your machine can even run it.
+>
+> **Ollama Miner fixes the data layer.** Every week it crawls `ollama.com/library`, pushes each model through 6 focused LLM enrichment calls, validates every field, and opens a Pull Request to [Ollama Explorer](https://github.com/serkan-uslu/ollama-explorer) — giving the UI fresh, structured metadata to search and filter by.
+
+</td>
+</tr>
+</table>
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Poetry](https://img.shields.io/badge/dependency%20manager-poetry-cyan.svg)](https://python-poetry.org/)
 [![Prefect](https://img.shields.io/badge/orchestration-prefect-blue.svg)](https://www.prefect.io/)
+[![Ollama](https://img.shields.io/badge/LLM-Ollama-black.svg)](https://ollama.com/)
 [![Groq](https://img.shields.io/badge/LLM-Groq-orange.svg)](https://groq.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-An automated, AI-powered data pipeline that crawls **ollama.com/library**, enriches each model with structured metadata using a Groq LLM, validates the results, and opens a Pull Request to [ollama-explorer](https://github.com/serkan-uslu/ollama-explorer) with the updated `models.json`.
+---
+
+## 🌐 Part of the Ollama Ecosystem
+
+This repo is **Part 1 of 2** — the automated data backend. The two repos form a complete product:
+
+| | Repo | Role |
+|:-:|------|------|
+| ⛏️ **You are here** | [`Ollama Miner`](https://github.com/serkan-uslu/ollama-db-pipeline) | Python pipeline — crawls `ollama.com/library`, enriches with LLM, validates, exports `models.json` |
+| 🌐 **Frontend** | [`Ollama Explorer`](https://github.com/serkan-uslu/ollama-explorer) | Next.js 16 app — fast, searchable, filterable directory of every Ollama model |
+
+```
+  ollama.com/library
+        ▼  (crawl every Monday 03:00 UTC)
+┌─────────────────────┐      PR: models.json      ┌──────────────────────────┐
+│     Ollama Miner       │ ────────────────────────▶ │    Ollama Explorer      │
+│  crawl → enrich     │   public/data/models.json  │  ollama-explorer.vercel  │
+│  validate → export  │                            │  .app  (🌐 live)         │
+└─────────────────────┘                            └──────────────────────────┘
+```
+
+🌐 **Live app** → [ollama-explorer.vercel.app](https://ollama-explorer.vercel.app)  
+📦 **Frontend source** → [github.com/serkan-uslu/ollama-explorer](https://github.com/serkan-uslu/ollama-explorer)
 
 ---
 
@@ -14,12 +56,13 @@ An automated, AI-powered data pipeline that crawls **ollama.com/library**, enric
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│                        ollama-pipeline                            │
+│                       Ollama Miner                               │
 │                                                                   │
 │  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐   │
 │  │ Crawler  │───▶│ Enricher │───▶│Validator │───▶│ Exporter │   │
-│  │ (crawl4ai│    │  (Groq + │    │(pydantic │    │  (JSON)  │   │
-│  │ + httpx) │    │instructor│    │ rules)   │    │          │   │
+│  │ (httpx + │    │(Ollama / │    │(pydantic │    │  (JSON)  │   │
+│  │Beautiful │    │Groq +inst│    │ rules +  │    │          │   │
+│  │ Soup)    │    │ ructor)  │    │re-enrich)│    │          │   │
 │  └──────────┘    └──────────┘    └──────────┘    └────┬─────┘   │
 │       │                │               │               │         │
 │       ▼                ▼               ▼               ▼         │
@@ -44,15 +87,15 @@ An automated, AI-powered data pipeline that crawls **ollama.com/library**, enric
 ## Pipeline Flow
 
 ```
-Crawler → Enricher → Validator → Exporter → PR Creator
+Crawler → Enricher → Validator [→ Re-Enricher → Re-Validator] → Exporter → PR Creator
 ```
 
 | Step | Agent | Description |
 |------|-------|-------------|
-| 1 | **Crawler** | Crawls `ollama.com/library` with Crawl4AI + httpx, extracts model slugs, descriptions, capabilities, hardware requirements |
-| 2 | **Enricher** | Sends model data to Groq LLM (via `instructor`) and extracts structured metadata: use cases, domain, languages, complexity, etc. |
-| 3 | **Validator** | Validates enriched data against quality rules. Re-queues failures (max 3 retries) |
-| 4 | **Exporter** | Serializes all models to `output/models.json` sorted by pull count |
+| 1 | **Crawler** | Crawls `ollama.com/library` with httpx + BeautifulSoup. Refreshes stats (pulls, last\_updated) for **all** models; fetches detail pages (readme, memory requirements) **only** for new ones |
+| 2 | **Enricher** | Sends model data to LLM (Ollama local or Groq cloud, via `instructor`) — 6 focused calls per model — and writes structured metadata to DB |
+| 3 | **Validator** | Validates enriched data against quality rules. Re-queues failures (max 3 retries, persisted across runs). If any re-queued, **immediately re-runs Enricher + Validator** in the same pipeline run |
+| 4 | **Exporter** | Serializes all enriched models to `output/models_<llm_model>.json` sorted by pull count |
 | 5 | **PR Creator** | Pushes `models.json` to `ollama-explorer` via GitHub REST API and opens a Pull Request |
 
 ---
@@ -70,14 +113,11 @@ Crawler → Enricher → Validator → Exporter → PR Creator
 
 ```bash
 # Clone the repo
-git clone https://github.com/serkan-uslu/ollama-pipeline.git
-cd ollama-pipeline
+git clone https://github.com/serkan-uslu/ollama-db-pipeline.git
+cd ollama-db-pipeline
 
 # Install dependencies
 poetry install --no-root
-
-# Install Playwright (used by Crawl4AI for JS-rendered pages)
-poetry run playwright install chromium
 ```
 
 ### Environment Variables
@@ -90,14 +130,16 @@ cp .env.example .env
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GROQ_API_KEY` | **Yes** (enrich step) | — | Groq API key for LLM enrichment |
+| `GROQ_API_KEY` | Only if `LLM_PROVIDER=groq` | — | Groq API key for LLM enrichment |
 | `CROSS_REPO_TOKEN` | **Yes** (PR step) | — | GitHub PAT with `repo` scope |
 | `GITHUB_TARGET_REPO` | No | `serkan-uslu/ollama-explorer` | Target repo for PR |
 | `GITHUB_TARGET_BRANCH` | No | `data/models-update` | Branch name for PR |
-| `OLLAMA_LIBRARY_URL` | No | `https://ollama.com/library` | Ollama library URL |
-| `REQUEST_DELAY` | No | `0.5` | Seconds to wait between detail page fetches |
+| `LLM_PROVIDER` | No | `ollama` | `ollama` (local) or `groq` (cloud) |
+| `LLM_MODEL` | No | `llama3.3:70b` | Model name for the chosen provider |
+| `OLLAMA_BASE_URL` | No | `http://localhost:11434/v1` | Ollama OpenAI-compatible API URL |
+| `ENRICH_WORKERS` | No | `3` | Parallel enrichment workers (2–4 for Ollama) |
 | `ENRICH_VERSION` | No | `1` | Bump this to force re-enrichment of all models |
-| `LLM_MODEL` | No | `llama-3.3-70b-versatile` | Groq model to use for enrichment |
+| `REQUEST_DELAY` | No | `0.5` | Seconds to wait between detail page fetches |
 
 ---
 
@@ -124,6 +166,9 @@ poetry run python main.py --model deepseek-r1
 
 # Dry run — crawl + enrich only, no export, no PR
 poetry run python main.py --dry-run
+
+# Re-parse stored raw_html for all models (no network) — updates readme, memory_requirements
+poetry run python main.py --reparse
 
 # Combine flags
 poetry run python main.py --skip-crawl --force-enrich --dry-run
@@ -165,15 +210,16 @@ Every run uploads two artifacts (kept for 7–30 days):
 
 | Purpose | Library |
 |---------|---------|
-| Web crawling | [crawl4ai](https://github.com/unclecode/crawl4ai) |
+| Web crawling | [httpx](https://www.python-httpx.org/) + [BeautifulSoup4](https://beautiful-soup-4.readthedocs.io/) |
 | LLM structured output | [instructor](https://github.com/jxnl/instructor) |
 | Data validation | [pydantic v2](https://docs.pydantic.dev) |
 | Database ORM | [sqlmodel](https://sqlmodel.tiangolo.com/) |
 | Database | SQLite (built-in) |
-| LLM API | [Groq](https://groq.com/) (`llama-3.3-70b-versatile`) |
+| LLM API (local) | [Ollama](https://ollama.com/) (OpenAI-compatible, default) |
+| LLM API (cloud) | [Groq](https://groq.com/) (optional) |
 | Orchestration | [Prefect](https://www.prefect.io/) |
 | HTTP | [httpx](https://www.python-httpx.org/) |
-| Environment vars | [python-dotenv](https://github.com/theskumar/python-dotenv) |
+| Environment vars | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) |
 | Package manager | [Poetry](https://python-poetry.org/) |
 
 ---
@@ -187,9 +233,9 @@ ollama-pipeline/
 │       └── update-models.yml    # GitHub Actions (weekly schedule + manual)
 ├── pipeline/
 │   ├── agents/
-│   │   ├── crawler.py           # F-01: Crawl4AI scraper
-│   │   ├── enricher.py          # F-02: Groq LLM enrichment
-│   │   ├── validator.py         # F-03: Data quality validation
+│   │   ├── crawler.py           # F-01: httpx + BeautifulSoup scraper
+│   │   ├── enricher.py          # F-02: Ollama/Groq LLM enrichment (6 calls/model)
+│   │   ├── validator.py         # F-03: Data quality validation + persistent retries
 │   │   ├── exporter.py          # F-04: JSON export
 │   │   └── pr_creator.py        # F-05: GitHub PR creation
 │   ├── core/
@@ -199,10 +245,9 @@ ollama-pipeline/
 │   ├── schemas/
 │   │   └── enrichment.py        # Pydantic schemas for LLM output
 │   └── flow.py                  # Prefect flow orchestration
-├── legacy/                      # Original scripts (reference only)
 ├── tests/                       # Unit tests for each agent
 ├── output/
-│   └── models.json              # Generated output (gitignored)
+│   └── models_*.json            # Generated output (gitignored)
 ├── .env.example
 ├── pyproject.toml
 └── main.py                      # CLI entrypoint
@@ -249,9 +294,22 @@ Each model in `models.json` contains:
 
 ---
 
-## Related
+## 🌐 Related
 
-- **[ollama-explorer](https://github.com/serkan-uslu/ollama-explorer)** — The frontend that consumes `models.json` to provide a searchable, filterable UI for all Ollama models.
+<table>
+<tr>
+<td width="110" align="center">
+  <img src="https://raw.githubusercontent.com/serkan-uslu/ollama-explorer/main/public/olli.jpg" alt="Olli" width="100" style="border-radius: 10px;" />
+</td>
+<td>
+
+**[Ollama Miner](https://github.com/serkan-uslu/ollama-db-pipeline)** — The data pipeline that produces `models.json` consumed by this app.  
+Crawls `ollama.com/library`, enriches 214+ models via LLM, validates every field, and opens a PR automatically every week.  
+⛏️ **[github.com/serkan-uslu/ollama-db-pipeline](https://github.com/serkan-uslu/ollama-db-pipeline)**
+
+</td>
+</tr>
+</table>
 
 ---
 

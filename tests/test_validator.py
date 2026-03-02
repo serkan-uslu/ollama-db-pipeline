@@ -116,8 +116,15 @@ class TestValidateModel:
         assert is_valid is False
         assert any("strengths" in f for f in failures)
 
-    def test_empty_limitations_fails(self):
+    def test_empty_limitations_passes(self):
+        """Empty limitations list is valid (schema allows min_length=0)."""
         model = make_enriched_model(limitations=[])
+        is_valid, failures = validate_model(model)
+        assert is_valid is True
+
+    def test_null_limitations_fails(self):
+        """None limitations fails the 'must not be null' rule."""
+        model = make_enriched_model(limitations=None)
         is_valid, failures = validate_model(model)
         assert is_valid is False
         assert any("limitations" in f for f in failures)

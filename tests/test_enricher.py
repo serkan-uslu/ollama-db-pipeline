@@ -19,7 +19,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
-from pipeline.agents.enricher import build_prompt, clean_readme, get_unenriched_models
+from pipeline.agents.enricher import (
+    _p1_domain_family,
+    _p2_use_cases,
+    _p3_basics,
+    clean_readme,
+    get_unenriched_models,
+)
 from pipeline.core.models import Model
 
 
@@ -69,13 +75,13 @@ class TestCleanReadme:
 
     def test_truncates_to_max_chars(self):
         long = "x" * 2000
-        result = clean_readme(long, max_chars=700)
-        assert len(result) == 700
+        result = clean_readme(long, max_chars=500)
+        assert len(result) == 500
 
-    def test_default_max_is_700(self):
-        long = "a" * 1000
+    def test_default_max_is_1200(self):
+        long = "a" * 2000
         result = clean_readme(long)
-        assert len(result) == 700
+        assert len(result) == 1200
 
     def test_short_text_preserved(self):
         text = "Short model description."
@@ -83,49 +89,62 @@ class TestCleanReadme:
         assert result == text
 
 
-# ── build_prompt ───────────────────────────────────────────────────────────────
+# ── Prompt helpers ────────────────────────────────────────────────────────────
+# NOTE: enricher uses 6 focused LLM calls (_p1–_p6) instead of a single
+# build_prompt(). Tests here verify each helper includes the expected content.
 
-class TestBuildPrompt:
-    def test_contains_model_identifier(self):
+class TestPromptHelpers:
+    """Tests for the individual prompt-builder functions (_p1–_p3)."""
+
+    # ── _p1_domain_family ──────────────────────────────────────────────────────
+
+    def test_p1_contains_model_identifier(self):
         model = make_model("deepseek-r1", description="Fast reasoning model")
-        prompt = build_prompt(model)
+        prompt = _p1_domain_family(model)
         assert "deepseek-r1" in prompt
 
-    def test_contains_model_name(self):
-        model = make_model("llama3")
-        prompt = build_prompt(model)
-        assert "Llama3" in prompt or "llama3" in prompt
-
-    def test_contains_description(self):
+    def test_p1_contains_description(self):
         model = make_model("gemma2", description="Google's language model")
-        prompt = build_prompt(model)
+        prompt = _p1_domain_family(model)
         assert "Google's language model" in prompt
 
-    def test_none_description_shows_na(self):
-        model = make_model("phi3", description=None)
-        prompt = build_prompt(model)
-        assert "N/A" in prompt
+    def test_p1_contains_domain_options(self):
+        model = make_model("llama3")
+        prompt = _p1_domain_family(model)
+        assert "General" in prompt
+        assert "domain" in prompt.lower()
 
-    def test_contains_readme_snippet(self):
-        model = make_model("mistral", readme="A powerful base model from Mistral AI.")
-        prompt = build_prompt(model)
-        assert "powerful base model" in prompt
+    def test_p1_contains_family_options(self):
+        model = make_model("mistral")
+        prompt = _p1_domain_family(model)
+        assert "model_family" in prompt
+        assert "Llama" in prompt
 
-    def test_readme_truncated_in_prompt(self):
-        model = make_model("qwen", readme="x" * 2000)
-        prompt = build_prompt(model)
-        # Prompt should contain the truncated readme, not the full 2000 chars
-        assert prompt.count("x") <= 700
+    # ── _p2_use_cases ──────────────────────────────────────────────────────────
 
-    def test_capabilities_included(self):
-        model = make_model("llava", capabilities=["Vision", "Tools"])
-        prompt = build_prompt(model)
-        assert "Vision" in prompt
+    def test_p2_contains_model_identifier(self):
+        model = make_model("llama3", description="General assistant")
+        prompt = _p2_use_cases(model)
+        assert "llama3" in prompt
 
-    def test_labels_included(self):
+    def test_p2_contains_use_case_options(self):
+        model = make_model("codellama")
+        prompt = _p2_use_cases(model)
+        assert "Code Generation" in prompt
+        assert "use_cases" in prompt
+
+    # ── _p3_basics ─────────────────────────────────────────────────────────────
+
+    def test_p3_contains_labels(self):
         model = make_model("llama3", labels=["8b", "70b"])
-        prompt = build_prompt(model)
+        prompt = _p3_basics(model)
         assert "8b" in prompt
+
+    def test_p3_contains_complexity_options(self):
+        model = make_model("phi3")
+        prompt = _p3_basics(model)
+        assert "complexity" in prompt
+        assert "beginner" in prompt
 
 
 # ── get_unenriched_models ──────────────────────────────────────────────────────
@@ -138,7 +157,10 @@ class TestGetUnenrichedModels:
         in_memory_session.add(m2)
         in_memory_session.commit()
 
-        result = get_unenriched_models(in_memory_session)
+        # Mock enrich_version=1 so that mistral (v=1) is NOT re-enriched
+        with patch("pipeline.agents.enricher.settings") as mock_settings:
+            mock_settings.enrich_version = 1
+            result = get_unenriched_models(in_memory_session)
         ids = [m.model_identifier for m in result]
         assert "llama3" in ids
         assert "mistral" not in ids

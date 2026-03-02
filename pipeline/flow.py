@@ -63,11 +63,11 @@ def run_validator_task():
 
 @task(name="exporter")
 def run_exporter_task() -> dict:
-    """Export all enriched models to output/models.json."""
+    """Export all enriched models to output/models_<llm_model>.json."""
     print(f"\n{'═'*60}", flush=True)
     print(f"[FLOW] ▶ ADIM 4 / 5 — EXPORTER", flush=True)
     print(f"{'═'*60}", flush=True)
-    stats = export_to_json()
+    stats = export_to_json()  # output_path=None → auto-named from settings.llm_model
     print(
         f"[FLOW] ✅ Export bitti — {stats.get('total', 0)} model → {stats.get('output_path', '')}",
         flush=True,
@@ -81,7 +81,8 @@ def run_pr_creator_task(export_stats: dict | None = None) -> str | None:
     print(f"\n{'═'*60}", flush=True)
     print(f"[FLOW] ▶ ADIM 5 / 5 — PR CREATOR", flush=True)
     print(f"{'═'*60}", flush=True)
-    pr_url = create_pull_request(export_stats=export_stats)
+    models_json_path = (export_stats or {}).get("output_path")
+    pr_url = create_pull_request(export_stats=export_stats, models_json_path=models_json_path) if models_json_path else create_pull_request(export_stats=export_stats)
     if pr_url:
         print(f"[FLOW] ✅ PR oluşturuldu — {pr_url}", flush=True)
     else:
@@ -140,6 +141,16 @@ def ollama_pipeline(
     else:
         print("[FLOW] ⏭  Dry-run — validator, exporter, PR creator atlandı", flush=True)
         return
+
+    # Step 3b — Re-enrich models that failed validation (same run)
+    if val_stats.get("re_queued", 0) > 0:
+        print(
+            f"\n[FLOW] 🔄 Validation {val_stats['re_queued']} modeli yeniden sıraya aldı — "
+            f"aynı run içinde tekrar enrich ediliyor...",
+            flush=True,
+        )
+        run_enricher_task(force=False, single_slug=None)
+        val_stats = run_validator_task()  # re-validate after re-enrichment
 
     # Step 4 — Export
     export_stats = run_exporter_task()
