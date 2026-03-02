@@ -2,8 +2,8 @@
 
 <table>
 <tr>
-<td width="210">
-  <img src="assets/olli-miner.jpg" alt="Olli the Data Miner — ollama-pipeline mascot" width="195" style="border-radius: 14px;" />
+<td width="240">
+  <img src="assets/olli-miner.jpg" alt="Olli the Data Miner — ollama-pipeline mascot" width="220" style="border-radius: 16px;" />
 </td>
 <td>
 
@@ -15,10 +15,14 @@
 >
 > **Ollama Miner fixes the data layer.** Every week it crawls `ollama.com/library`, pushes each model through 6 focused LLM enrichment calls, validates every field, and opens a Pull Request to [Ollama Explorer](https://github.com/serkan-uslu/ollama-explorer) — giving the UI fresh, structured metadata to search and filter by.
 
+📦 **Source** → [github.com/serkan-uslu/ollama-db-pipeline](https://github.com/serkan-uslu/ollama-db-pipeline)
+🌐 **Live result** → [ollama-explorer.vercel.app](https://ollama-explorer.vercel.app)
+
 </td>
 </tr>
 </table>
 
+[![GitHub Stars](https://img.shields.io/github/stars/serkan-uslu/ollama-db-pipeline?style=social)](https://github.com/serkan-uslu/ollama-db-pipeline/stargazers)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Poetry](https://img.shields.io/badge/dependency%20manager-poetry-cyan.svg)](https://python-poetry.org/)
 [![Prefect](https://img.shields.io/badge/orchestration-prefect-blue.svg)](https://www.prefect.io/)
@@ -28,26 +32,26 @@
 
 ---
 
-## 🌐 Part of the Ollama Ecosystem
+## ⚙️ Part of a Two-Repo Ecosystem
 
-This repo is **Part 1 of 2** — the automated data backend. The two repos form a complete product:
+Ollama Miner is **Part 1 of 2** — the automated data backend. The two repos form a complete product:
 
-| | Repo | Role |
-|:-:|------|------|
-| ⛏️ **You are here** | [`Ollama Miner`](https://github.com/serkan-uslu/ollama-db-pipeline) | Python pipeline — crawls `ollama.com/library`, enriches with LLM, validates, exports `models.json` |
-| 🌐 **Frontend** | [`Ollama Explorer`](https://github.com/serkan-uslu/ollama-explorer) | Next.js 16 app — fast, searchable, filterable directory of every Ollama model |
+|                      | Repo                                                                | Role                                                                                                              |
+| :------------------: | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| ⛏️ **You are here**  | [`Ollama Miner`](https://github.com/serkan-uslu/ollama-db-pipeline) | Python pipeline — crawls `ollama.com/library`, enriches with LLM, validates, exports `models.json`               |
+| 🌐 **Frontend**      | [`Ollama Explorer`](https://github.com/serkan-uslu/ollama-explorer) | Next.js 16 app — fast, searchable, filterable directory of every Ollama model                                     |
 
 ```
   ollama.com/library
         ▼  (crawl every Monday 03:00 UTC)
 ┌─────────────────────┐      PR: models.json      ┌──────────────────────────┐
-│     Ollama Miner       │ ────────────────────────▶ │    Ollama Explorer      │
-│  crawl → enrich     │   public/data/models.json  │  ollama-explorer.vercel  │
-│  validate → export  │                            │  .app  (🌐 live)         │
+│     Ollama Miner    │ ────────────────────────▶  │    Ollama Explorer       │
+│  crawl → enrich     │   public/data/models.json  │  🔍 filter · compare ·  │
+│  validate → export  │                            │  search (live here)     │
 └─────────────────────┘                            └──────────────────────────┘
 ```
 
-🌐 **Live app** → [ollama-explorer.vercel.app](https://ollama-explorer.vercel.app)  
+🌐 **Live app** → [ollama-explorer.vercel.app](https://ollama-explorer.vercel.app)
 📦 **Frontend source** → [github.com/serkan-uslu/ollama-explorer](https://github.com/serkan-uslu/ollama-explorer)
 
 ---
@@ -56,7 +60,7 @@ This repo is **Part 1 of 2** — the automated data backend. The two repos form 
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│                       Ollama Miner                               │
+│                       Ollama Miner                                │
 │                                                                   │
 │  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐   │
 │  │ Crawler  │───▶│ Enricher │───▶│Validator │───▶│ Exporter │   │
@@ -97,6 +101,55 @@ Crawler → Enricher → Validator [→ Re-Enricher → Re-Validator] → Export
 | 3 | **Validator** | Validates enriched data against quality rules. Re-queues failures (max 3 retries, persisted across runs). If any re-queued, **immediately re-runs Enricher + Validator** in the same pipeline run |
 | 4 | **Exporter** | Serializes all enriched models to `output/models_<llm_model>.json` sorted by pull count |
 | 5 | **PR Creator** | Pushes `models.json` to `ollama-explorer` via GitHub REST API and opens a Pull Request |
+
+---
+
+## Tech Stack
+
+| Purpose | Library |
+|---------|---------|
+| Web crawling | [httpx](https://www.python-httpx.org/) + [BeautifulSoup4](https://beautiful-soup-4.readthedocs.io/) |
+| LLM structured output | [instructor](https://github.com/jxnl/instructor) |
+| Data validation | [pydantic v2](https://docs.pydantic.dev) |
+| Database ORM | [sqlmodel](https://sqlmodel.tiangolo.com/) |
+| Database | SQLite (built-in) |
+| LLM API (local) | [Ollama](https://ollama.com/) (OpenAI-compatible, default) |
+| LLM API (cloud) | [Groq](https://groq.com/) (optional) |
+| Orchestration | [Prefect](https://www.prefect.io/) |
+| HTTP | [httpx](https://www.python-httpx.org/) |
+| Environment vars | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) |
+| Package manager | [Poetry](https://python-poetry.org/) |
+
+---
+
+## Project Structure
+
+```
+ollama-pipeline/
+├── .github/
+│   └── workflows/
+│       └── update-models.yml    # GitHub Actions (weekly schedule + manual)
+├── pipeline/
+│   ├── agents/
+│   │   ├── crawler.py           # F-01: httpx + BeautifulSoup scraper
+│   │   ├── enricher.py          # F-02: Ollama/Groq LLM enrichment (6 calls/model)
+│   │   ├── validator.py         # F-03: Data quality validation + persistent retries
+│   │   ├── exporter.py          # F-04: JSON export
+│   │   └── pr_creator.py        # F-05: GitHub PR creation
+│   ├── core/
+│   │   ├── db.py                # SQLite engine + session
+│   │   ├── models.py            # SQLModel table definition
+│   │   └── settings.py          # Pydantic Settings (env vars)
+│   ├── schemas/
+│   │   └── enrichment.py        # Pydantic schemas for LLM output
+│   └── flow.py                  # Prefect flow orchestration
+├── tests/                       # Unit tests for each agent
+├── output/
+│   └── models_*.json            # Generated output (gitignored)
+├── .env.example
+├── pyproject.toml
+└── main.py                      # CLI entrypoint
+```
 
 ---
 
@@ -206,55 +259,6 @@ Every run uploads two artifacts (kept for 7–30 days):
 
 ---
 
-## Tech Stack
-
-| Purpose | Library |
-|---------|---------|
-| Web crawling | [httpx](https://www.python-httpx.org/) + [BeautifulSoup4](https://beautiful-soup-4.readthedocs.io/) |
-| LLM structured output | [instructor](https://github.com/jxnl/instructor) |
-| Data validation | [pydantic v2](https://docs.pydantic.dev) |
-| Database ORM | [sqlmodel](https://sqlmodel.tiangolo.com/) |
-| Database | SQLite (built-in) |
-| LLM API (local) | [Ollama](https://ollama.com/) (OpenAI-compatible, default) |
-| LLM API (cloud) | [Groq](https://groq.com/) (optional) |
-| Orchestration | [Prefect](https://www.prefect.io/) |
-| HTTP | [httpx](https://www.python-httpx.org/) |
-| Environment vars | [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) |
-| Package manager | [Poetry](https://python-poetry.org/) |
-
----
-
-## Project Structure
-
-```
-ollama-pipeline/
-├── .github/
-│   └── workflows/
-│       └── update-models.yml    # GitHub Actions (weekly schedule + manual)
-├── pipeline/
-│   ├── agents/
-│   │   ├── crawler.py           # F-01: httpx + BeautifulSoup scraper
-│   │   ├── enricher.py          # F-02: Ollama/Groq LLM enrichment (6 calls/model)
-│   │   ├── validator.py         # F-03: Data quality validation + persistent retries
-│   │   ├── exporter.py          # F-04: JSON export
-│   │   └── pr_creator.py        # F-05: GitHub PR creation
-│   ├── core/
-│   │   ├── db.py                # SQLite engine + session
-│   │   ├── models.py            # SQLModel table definition
-│   │   └── settings.py          # Pydantic Settings (env vars)
-│   ├── schemas/
-│   │   └── enrichment.py        # Pydantic schemas for LLM output
-│   └── flow.py                  # Prefect flow orchestration
-├── tests/                       # Unit tests for each agent
-├── output/
-│   └── models_*.json            # Generated output (gitignored)
-├── .env.example
-├── pyproject.toml
-└── main.py                      # CLI entrypoint
-```
-
----
-
 ## Data Schema
 
 Each model in `models.json` contains:
@@ -294,22 +298,40 @@ Each model in `models.json` contains:
 
 ---
 
-## 🌐 Related
+## 🤝 Contributing
 
-<table>
-<tr>
-<td width="110" align="center">
-  <img src="https://raw.githubusercontent.com/serkan-uslu/ollama-explorer/main/public/olli.jpg" alt="Olli" width="100" style="border-radius: 10px;" />
-</td>
-<td>
+We welcome contributions! To get started, open an issue or submit a PR.
 
-**[Ollama Miner](https://github.com/serkan-uslu/ollama-db-pipeline)** — The data pipeline that produces `models.json` consumed by this app.  
-Crawls `ollama.com/library`, enriches 214+ models via LLM, validates every field, and opens a PR automatically every week.  
-⛏️ **[github.com/serkan-uslu/ollama-db-pipeline](https://github.com/serkan-uslu/ollama-db-pipeline)**
+**Looking for help with:**
 
-</td>
-</tr>
-</table>
+- 🧠 Improving LLM prompt quality (enrichment accuracy)
+- 🧪 Expanding test coverage for pipeline agents
+- 📊 Adding new data fields (pricing, quantization info, etc.)
+- 🔌 Supporting additional LLM providers (Anthropic, OpenAI, etc.)
+- ⚡ Performance optimizations (parallelism, caching)
+- 📝 Documentation improvements
+
+[Good First Issues](https://github.com/serkan-uslu/ollama-db-pipeline/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+
+---
+
+## 🗺 Roadmap
+
+- [ ] Support additional LLM providers (Anthropic, OpenAI, Mistral)
+- [ ] Incremental updates — only re-enrich changed or new models
+- [ ] Richer enrichment fields (pricing, hardware requirements, quantization tiers)
+- [ ] Automated benchmark scoring integration
+- [ ] Multi-language prompt support
+- [ ] Rate-limiting and retry strategy improvements
+- [ ] Dashboard / observability for pipeline runs
+
+---
+
+## 💬 Support & Community
+
+- 💬 [Discussions](https://github.com/serkan-uslu/ollama-db-pipeline/discussions)
+- 🐛 [Bug Reports](https://github.com/serkan-uslu/ollama-db-pipeline/issues?q=is%3Aissue+label%3Abug)
+- 💡 [Feature Requests](https://github.com/serkan-uslu/ollama-db-pipeline/issues?q=is%3Aissue+label%3Aenhancement)
 
 ---
 
@@ -318,3 +340,17 @@ Crawls `ollama.com/library`, enriches 214+ models via LLM, validates every field
 ```bash
 poetry run pytest tests/ -v
 ```
+
+---
+
+## ⭐ Star History
+
+If you find this project useful, please consider giving it a star! ⭐
+
+[![Star History Chart](https://api.star-history.com/svg?repos=serkan-uslu/ollama-db-pipeline&type=Date)](https://star-history.com/#serkan-uslu/ollama-db-pipeline&Date)
+
+---
+
+## 📄 License
+
+MIT © [Serkan Uslu](https://github.com/serkan-uslu)
